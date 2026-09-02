@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Ростикс Менеджер",
+    "slug": "rostics-manager",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ru.rostics.manager"
+    },
+    "android": {
+      "package": "ru.rostics.manager",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-splash-screen"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f39b8b74-946f-4c20-8320-54a6482042b8"
+      }
+    },
+    "owner": "vladimiren05"
+  }
+}

@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# expo / metro
+.expo/
+dist/
+dist-check/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+
+# generated native projects (managed workflow)
+/rostics-manager/android/
+/rostics-manager/ios/
+
+# env & secrets — держим локально, в репозитории только *.example
+.env
+.env*.local
+/rostics-manager/eas.json
+
+# claude code / локальная оснастка
+.claude/
+.mcp.json
+
+# supabase cli local state
+backend/supabase/.branches/
+backend/supabase/.temp/
+
+# misc
+.DS_Store
+*.tsbuildinfo
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
