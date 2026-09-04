@@ -55,7 +55,7 @@ export default function RegisterScreen({ navigation }: Props) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView contentContainerStyle={styles.content}>
-          <Text style={styles.logo}>Ростикс</Text>
+          <Text style={styles.logo}>Rostiks</Text>
           <Text style={styles.title}>Регистрация менеджера</Text>
           <Text style={styles.subtitle}>
             Аккаунт создаётся один раз для этого ресторана

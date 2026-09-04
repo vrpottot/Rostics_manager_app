@@ -15,6 +15,7 @@ import { useTheme } from '../ThemeContext';
 import { Colors, font } from '../theme';
 import { Chip } from '../components';
 import { Role, ROLE_LABEL } from '../types';
+import { confirmAsync } from '../utils';
 
 type Props = NativeStackScreenProps<TeamStackParams, 'EmployeeEdit'>;
 
@@ -44,23 +45,17 @@ export default function EmployeeEditScreen({ navigation, route }: Props) {
     navigation.goBack();
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     const cnt = shifts.filter((s) => s.employeeId === editing?.id).length;
-    Alert.alert(
+    const ok = await confirmAsync(
       'Удалить сотрудника?',
       cnt ? `Будет удалено смен: ${cnt}` : undefined,
-      [
-        { text: 'Отмена', style: 'cancel' },
-        {
-          text: 'Удалить',
-          style: 'destructive',
-          onPress: () => {
-            if (editing) removeEmployee(editing.id);
-            navigation.goBack();
-          },
-        },
-      ]
+      'Удалить',
+      true
     );
+    if (!ok) return;
+    if (editing) removeEmployee(editing.id);
+    navigation.goBack();
   };
 
   return (

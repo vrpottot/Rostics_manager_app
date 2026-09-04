@@ -13,7 +13,7 @@ import { TasksStackParams } from '../navigation';
 import { useStore } from '../store';
 import { useTheme } from '../ThemeContext';
 import { Colors, font } from '../theme';
-import { Avatar, Chip } from '../components';
+import { Chip } from '../components';
 import {
   CATEGORY_LABEL,
   CATEGORY_ORDER,
@@ -24,12 +24,12 @@ import {
   TaskPriority,
   TaskStatus,
 } from '../types';
-import { addDays, humanDate, toISODate } from '../utils';
+import { confirmAsync } from '../utils';
 
 type Props = NativeStackScreenProps<TasksStackParams, 'TaskEdit'>;
 
 export default function TaskEditScreen({ navigation, route }: Props) {
-  const { tasks, employees, addTask, updateTask, removeTask } = useStore();
+  const { tasks, addTask, updateTask, removeTask } = useStore();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const editing = tasks.find((t) => t.id === route.params?.taskId);
@@ -41,10 +41,6 @@ export default function TaskEditScreen({ navigation, route }: Props) {
   const [description, setDescription] = useState(editing?.description ?? '');
   const [priority, setPriority] = useState<TaskPriority>(editing?.priority ?? 'med');
   const [status, setStatus] = useState<TaskStatus>(editing?.status ?? 'open');
-  const [assigneeId, setAssigneeId] = useState<string | null>(
-    editing?.assigneeId ?? null
-  );
-  const [dueDate, setDueDate] = useState<string | null>(editing?.dueDate ?? null);
 
   const isRecurring = isRecurringCategory(category);
 
@@ -71,8 +67,8 @@ export default function TaskEditScreen({ navigation, route }: Props) {
       title: title.trim(),
       description: description.trim() || undefined,
       priority: isRecurring ? ('med' as const) : priority,
-      assigneeId: isRecurring ? null : assigneeId,
-      dueDate: isRecurring ? null : dueDate,
+      assigneeId: null,
+      dueDate: null,
     };
     if (editing) {
       updateTask(editing.id, {
@@ -89,26 +85,11 @@ export default function TaskEditScreen({ navigation, route }: Props) {
     navigation.goBack();
   };
 
-  const confirmDelete = () => {
-    Alert.alert('Удалить?', title, [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: () => {
-          if (editing) removeTask(editing.id);
-          navigation.goBack();
-        },
-      },
-    ]);
+  const confirmDelete = async () => {
+    if (!(await confirmAsync('Удалить?', title, 'Удалить', true))) return;
+    if (editing) removeTask(editing.id);
+    navigation.goBack();
   };
-
-  const dueOptions: { label: string; value: string | null }[] = [
-    { label: 'Сегодня', value: toISODate(new Date()) },
-    { label: 'Завтра', value: toISODate(addDays(new Date(), 1)) },
-    { label: 'Через 3 дня', value: toISODate(addDays(new Date(), 3)) },
-    { label: 'Без срока', value: null },
-  ];
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -174,45 +155,6 @@ export default function TaskEditScreen({ navigation, route }: Props) {
               />
             ))}
           </View>
-
-          <Text style={styles.label}>Исполнитель</Text>
-          <View style={styles.chips}>
-            <Chip
-              label="Не назначен"
-              active={assigneeId === null}
-              onPress={() => setAssigneeId(null)}
-            />
-            {employees.map((e) => (
-              <Pressable
-                key={e.id}
-                onPress={() => setAssigneeId(e.id)}
-                style={[
-                  styles.personChip,
-                  assigneeId === e.id && {
-                    borderColor: colors.brand,
-                    backgroundColor: colors.brandTint,
-                  },
-                ]}
-              >
-                <Avatar name={e.name} color={e.color} size={22} />
-                <Text style={styles.personName}>{e.name}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <Text style={styles.label}>
-            Срок{dueDate ? `: ${humanDate(dueDate)}` : ''}
-          </Text>
-          <View style={styles.chips}>
-            {dueOptions.map((o) => (
-              <Chip
-                key={o.label}
-                label={o.label}
-                active={dueDate === o.value}
-                onPress={() => setDueDate(o.value)}
-              />
-            ))}
-          </View>
         </>
       )}
 
@@ -262,20 +204,6 @@ const makeStyles = (colors: Colors) =>
     },
     multiline: { minHeight: 76, textAlignVertical: 'top' },
     chips: { flexDirection: 'row', flexWrap: 'wrap' },
-    personChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      backgroundColor: colors.card,
-      borderRadius: 999,
-      paddingHorizontal: 11,
-      paddingVertical: 6,
-      marginRight: 8,
-      marginBottom: 8,
-    },
-    personName: { fontFamily: font.semibold, fontSize: 13, color: colors.text },
     saveBtn: {
       backgroundColor: colors.brand,
       borderRadius: 14,

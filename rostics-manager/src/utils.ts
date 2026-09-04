@@ -1,6 +1,38 @@
 export const uid = () =>
   Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+/**
+ * Диалог подтверждения, работающий и на web (там Alert с кнопками из
+ * react-native-web не срабатывает — колбэки кнопок не вызываются).
+ */
+export function confirmAsync(
+  title: string,
+  message?: string,
+  confirmLabel = 'ОК',
+  destructive = false
+): Promise<boolean> {
+  // require здесь, чтобы utils.ts оставался без импорта RN
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { Alert, Platform } = require('react-native');
+  if (Platform.OS === 'web') {
+    return Promise.resolve(
+      typeof window === 'undefined'
+        ? true
+        : window.confirm(message ? `${title}\n\n${message}` : title)
+    );
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: 'Отмена', style: 'cancel', onPress: () => resolve(false) },
+      {
+        text: confirmLabel,
+        style: destructive ? 'destructive' : 'default',
+        onPress: () => resolve(true),
+      },
+    ]);
+  });
+}
+
 export const todayISO = () => toISODate(new Date());
 
 export function toISODate(d: Date): string {

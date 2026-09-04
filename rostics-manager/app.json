@@ -13,7 +13,7 @@
     "android": {
       "package": "ru.rostics.manager",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -25,13 +25,32 @@
     },
     "plugins": [
       "expo-font",
-      "expo-splash-screen"
+      "expo-splash-screen",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Доступ к фото нужен, чтобы выбрать фото профиля."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#E4002B"
+        }
+      ],
+      "./plugins/withAsciiRootProjectName.js"
     ],
     "extra": {
       "eas": {
         "projectId": "f39b8b74-946f-4c20-8320-54a6482042b8"
       }
     },
-    "owner": "vladimiren05"
+    "owner": "vladimiren05",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f39b8b74-946f-4c20-8320-54a6482042b8"
+    }
   }
 }

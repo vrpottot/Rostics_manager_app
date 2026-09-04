@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { TasksStackParams } from '../navigation';
@@ -11,16 +18,25 @@ import {
   CATEGORY_LABEL,
   isRecurringCategory,
   MANAGER_SHIFT_LABEL,
+  ManagerSchedule,
+  ManagerShiftEntry,
   ManagerShiftType,
   PRIORITY_LABEL,
-  SHIFT_TIMES,
   STATUS_LABEL,
   Task,
   TaskCategory,
   TaskPriority,
   TaskStatus,
 } from '../types';
-import { humanDate, todayISO } from '../utils';
+import {
+  addDays,
+  humanDate,
+  toISODate,
+  todayISO,
+  weekdayShort,
+} from '../utils';
+import { dailyQuote } from '../quotes';
+import { DueOrder, ordersDueOn, WEEKDAY_LABEL } from '../orderSchedule';
 
 type Props = NativeStackScreenProps<TasksStackParams, 'TasksList'>;
 
@@ -65,7 +81,7 @@ export default function TasksScreen({ navigation }: Props) {
   const PRIORITY = useMemo(() => priorityStyle(colors), [colors]);
 
   const today = todayISO();
-  const todayShift = managerSchedule[today] as ManagerShiftType | undefined;
+  const todayShift = managerSchedule[today];
 
   // ----- выходной -----
   if (!todayShift) {
@@ -91,6 +107,7 @@ export default function TasksScreen({ navigation }: Props) {
       tasks={tasks}
       employees={employees}
       dailyLog={dailyLog}
+      managerSchedule={managerSchedule}
       today={today}
       todayShift={todayShift}
       updateTask={updateTask}
@@ -108,6 +125,7 @@ function WorkingDay({
   tasks,
   employees,
   dailyLog,
+  managerSchedule,
   today,
   todayShift,
   updateTask,
@@ -121,13 +139,14 @@ function WorkingDay({
   tasks: Task[];
   employees: { id: string; name: string; color: string }[];
   dailyLog: Record<string, string[]>;
+  managerSchedule: ManagerSchedule;
   today: string;
-  todayShift: ManagerShiftType;
+  todayShift: ManagerShiftEntry;
   updateTask: (id: string, patch: Partial<Task>) => void;
   moveChecklistTask: (id: string, dir: -1 | 1) => void;
   setDailyChecked: (date: string, id: string, done: boolean) => void;
 }) {
-  const recurringToday = RECURRING_FOR_SHIFT[todayShift];
+  const recurringToday = RECURRING_FOR_SHIFT[todayShift.type];
   const visibleCats = useMemo<TaskCategory[]>(
     () => ['shift', recurringToday, 'product'],
     [recurringToday]
@@ -139,7 +158,7 @@ function WorkingDay({
 
   const recurring = isRecurringCategory(category);
   const doneToday = dailyLog[today] ?? [];
-  const [sh, eh] = SHIFT_TIMES[todayShift];
+  const [sh, eh] = [todayShift.start, todayShift.end];
 
   const checklistTasks = useMemo(
     () =>
@@ -162,6 +181,21 @@ function WorkingDay({
     );
   }, [tasks, category, filter]);
 
+  const quote = useMemo(() => dailyQuote(), []);
+  const dueOrders = useMemo(
+    () => (category === 'product' ? ordersDueOn(today, managerSchedule) : []),
+    [category, today, managerSchedule]
+  );
+  const ordersByDay = useMemo(() => {
+    if (category !== 'product') return [];
+    const start = new Date(today + 'T00:00:00');
+    return Array.from({ length: 30 }, (_, i) => {
+      const date = toISODate(addDays(start, i));
+      return { date, orders: ordersDueOn(date, managerSchedule) };
+    });
+  }, [category, today, managerSchedule]);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
   const cycleStatus = (t: Task) => {
     const status = NEXT_STATUS[t.status];
     updateTask(t.id, {
@@ -173,9 +207,9 @@ function WorkingDay({
   return (
     <View style={styles.screen}>
       <Hero
-        title={'Сегодня хороший день,\nвы со всем справитесь'}
+        title={quote}
         titleSize={22}
-        subtitle={`Ваша смена: ${MANAGER_SHIFT_LABEL[todayShift]} · ${sh}–${eh}`}
+        subtitle={`Ваша смена: ${MANAGER_SHIFT_LABEL[todayShift.type]} · ${sh}–${eh}`}
       />
 
       <View style={styles.tabs}>
@@ -211,6 +245,29 @@ function WorkingDay({
         />
       ) : (
         <>
+          {category === 'product' ? (
+            <>
+              {dueOrders.length > 0 ? (
+                <OrdersDueCard orders={dueOrders} styles={styles} colors={colors} />
+              ) : null}
+              <Pressable
+                style={styles.calendarBtn}
+                onPress={() => setCalendarOpen(true)}
+              >
+                <Ionicons name="calendar-outline" size={18} color={colors.brand} />
+                <Text style={styles.calendarBtnText}>Календарь заказов</Text>
+              </Pressable>
+              <OrdersCalendarModal
+                visible={calendarOpen}
+                onClose={() => setCalendarOpen(false)}
+                days={ordersByDay}
+                today={today}
+                styles={styles}
+                colors={colors}
+              />
+            </>
+          ) : null}
+
           <View style={styles.filters}>
             {FILTERS.map((f) => (
               <Chip
@@ -298,6 +355,111 @@ function WorkingDay({
 
       <FAB onPress={() => navigation.navigate('TaskEdit', { category })} />
     </View>
+  );
+}
+
+function OrdersDueCard({
+  orders,
+  styles,
+  colors,
+}: {
+  orders: DueOrder[];
+  styles: ReturnType<typeof makeStyles>;
+  colors: Colors;
+}) {
+  return (
+    <View style={styles.ordersWrap}>
+      <Card>
+        <View style={styles.ordersHead}>
+          <Ionicons name="cube-outline" size={18} color={colors.brand} />
+          <Text style={styles.ordersTitle}>Сегодня нужно заказать</Text>
+        </View>
+        {orders.map(({ entry, deliveryDate, shifted }) => (
+          <View key={entry.id} style={styles.orderRow}>
+            <Text style={styles.orderSupplier}>
+              {entry.supplier}
+              {entry.note ? ` · ${entry.note}` : ''}
+            </Text>
+            <Text style={styles.orderMeta}>
+              поставка {WEEKDAY_LABEL[entry.deliveryDay]} · {humanDate(deliveryDate)}
+              {shifted ? ' · перенос с выходного' : ''}
+            </Text>
+          </View>
+        ))}
+      </Card>
+    </View>
+  );
+}
+
+function OrdersCalendarModal({
+  visible,
+  onClose,
+  days,
+  today,
+  styles,
+  colors,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  days: { date: string; orders: DueOrder[] }[];
+  today: string;
+  styles: ReturnType<typeof makeStyles>;
+  colors: Colors;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalScreen}>
+        <View style={styles.modalHead}>
+          <Text style={styles.modalTitle}>Календарь заказов</Text>
+          <Pressable hitSlop={12} onPress={onClose}>
+            <Ionicons name="close" size={26} color={colors.text} />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalList}>
+          {days.map(({ date, orders }) => {
+            const isToday = date === today;
+            return (
+              <View
+                key={date}
+                style={[styles.calRow, isToday && styles.calRowToday]}
+              >
+                <View style={styles.calDateCol}>
+                  <Text style={[styles.calWeekday, isToday && styles.dayCardTodayText]}>
+                    {isToday ? 'Сегодня' : weekdayShort(date)}
+                  </Text>
+                  <Text style={[styles.calDate, isToday && styles.dayCardTodayText]}>
+                    {humanDate(date)}
+                  </Text>
+                </View>
+                <View style={styles.flex}>
+                  {orders.length === 0 ? (
+                    <Text style={styles.dayCardEmpty}>Заказов нет</Text>
+                  ) : (
+                    orders.map(({ entry, deliveryDate }) => (
+                      <View key={entry.id} style={styles.dayCardOrderBlock}>
+                        <Text style={styles.dayCardOrder}>
+                          {entry.supplier}
+                          {entry.note ? ` · ${entry.note}` : ''}
+                        </Text>
+                        <Text style={styles.dayCardOrderDelivery}>
+                          на {WEEKDAY_LABEL[entry.deliveryDay]} · {humanDate(deliveryDate)}
+                        </Text>
+                      </View>
+                    ))
+                  )}
+                </View>
+              </View>
+            );
+          })}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </View>
+    </Modal>
   );
 }
 
@@ -437,6 +599,88 @@ const makeStyles = (colors: Colors) =>
     tabOn: { borderBottomColor: colors.brand },
     tabText: { fontFamily: font.semibold, fontSize: 13, color: colors.textMuted },
     tabTextOn: { color: colors.brand, fontFamily: font.bold },
+    ordersWrap: { paddingHorizontal: 18, paddingTop: 14 },
+    ordersHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    ordersTitle: { fontFamily: font.bold, fontSize: 14, color: colors.text },
+    orderRow: {
+      marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    orderSupplier: { fontFamily: font.semibold, fontSize: 14, color: colors.text },
+    orderMeta: {
+      fontFamily: font.medium,
+      fontSize: 12,
+      color: colors.textMuted,
+      marginTop: 2,
+    },
+    calendarBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      minHeight: 46,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.brand,
+      backgroundColor: colors.brandTint,
+      marginHorizontal: 18,
+      marginTop: 14,
+    },
+    calendarBtnText: { fontFamily: font.bold, fontSize: 14, color: colors.brand },
+    dayCardTodayText: { color: colors.brand },
+    dayCardEmpty: { fontFamily: font.medium, fontSize: 12, color: colors.textFaint },
+    dayCardOrderBlock: { marginTop: 6 },
+    dayCardOrder: {
+      fontFamily: font.semibold,
+      fontSize: 13,
+      color: colors.text,
+    },
+    dayCardOrderDelivery: {
+      fontFamily: font.medium,
+      fontSize: 12,
+      color: colors.textMuted,
+      marginTop: 1,
+    },
+    modalScreen: { flex: 1, backgroundColor: colors.bg },
+    modalHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    modalTitle: { fontFamily: font.display, fontSize: 18, color: colors.text },
+    modalList: { paddingHorizontal: 18, paddingTop: 8 },
+    calRow: {
+      flexDirection: 'row',
+      gap: 14,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    calRowToday: {
+      backgroundColor: colors.brandTint,
+      borderRadius: 12,
+      paddingHorizontal: 10,
+      borderBottomWidth: 0,
+    },
+    calDateCol: { width: 84 },
+    calWeekday: {
+      fontFamily: font.bold,
+      fontSize: 12,
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+    },
+    calDate: {
+      fontFamily: font.semibold,
+      fontSize: 13,
+      color: colors.text,
+      marginTop: 1,
+    },
     filters: {
       flexDirection: 'row',
       flexWrap: 'wrap',

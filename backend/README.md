@@ -17,7 +17,12 @@ backend/
       20260902120000_init.sql       — таблицы
       20260902120100_rls.sql        — Row Level Security
       20260902120200_register.sql   — триггер регистрации
+      20260902120300_manager_schedule_times.sql — точные часы смены (импорт из Excel)
 ```
+
+> ⚠️ Миграцию `…120300…` нужно применить к облачному проекту (Studio → SQL Editor
+> или `supabase db push`), иначе импорт графика из Excel упадёт на неизвестных
+> колонках `start_time` / `end_time`.
 
 ---
 

@@ -6,6 +6,7 @@ export interface Account {
   passHash: string;
   restaurantName?: string;
   position?: string;
+  avatarUrl?: string;
   createdAt: string;
 }
 
@@ -26,8 +27,31 @@ export const SHIFT_TIMES: Record<ManagerShiftType, [string, string]> = {
   evening: ['15:00', '24:00'],
 };
 
-/** График менеджера: дата (YYYY-MM-DD) -> тип смены. Отсутствие даты = выходной. */
-export type ManagerSchedule = Record<string, ManagerShiftType>;
+/** Одна смена менеджера в графике. */
+export interface ManagerShiftEntry {
+  type: ManagerShiftType;
+  /** HH:mm */
+  start: string;
+  /** HH:mm */
+  end: string;
+}
+
+/** График менеджера: дата (YYYY-MM-DD) -> смена. Отсутствие даты = выходной. */
+export type ManagerSchedule = Record<string, ManagerShiftEntry>;
+
+/** Тип смены по времени начала (для цвета/ярлыка при импорте произвольных часов). */
+export function shiftTypeFromStart(start: string): ManagerShiftType {
+  const h = Number(start.split(':')[0]) || 0;
+  if (h < 11) return 'morning';
+  if (h < 14) return 'day';
+  return 'evening';
+}
+
+/** Собрать запись смены с временами по умолчанию для выбранного типа. */
+export function entryForType(type: ManagerShiftType): ManagerShiftEntry {
+  const [start, end] = SHIFT_TIMES[type];
+  return { type, start, end };
+}
 
 export type Role = 'manager' | 'shift' | 'trainee' | 'crew';
 

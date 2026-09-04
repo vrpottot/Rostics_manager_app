@@ -11,6 +11,9 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import { decode as decodeBase64 } from 'base64-arraybuffer';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import {
@@ -20,10 +23,21 @@ import {
   isRecurringCategory,
   ManagerSchedule,
   ManagerShiftType,
+  entryForType,
   Shift,
   Task,
 } from './types';
+import type {
+  ImportedShift,
+  ImportedEmployee,
+  ImportedEmployeeShift,
+} from './lib/scheduleImport';
 import { EMPLOYEE_COLORS } from './theme';
+import { startOfWeek, toISODate } from './utils';
+import { scheduleReminders } from './lib/notifications';
+
+/** Понедельник текущей недели — раньше него график в приложении не показываем. */
+const weekFloorISO = () => toISODate(startOfWeek(new Date()));
 
 export type AuthResult = { ok: true } | { ok: false; error: string };
 
@@ -120,8 +134,16 @@ interface StoreValue extends AppData {
   updateAccount: (
     patch: Partial<Pick<Account, 'name' | 'restaurantName' | 'position'>>
   ) => void;
+  /** Загружает фото профиля (локальный uri) в Storage и сохраняет ссылку. */
+  uploadAvatar: (uri: string, mimeType: string) => Promise<AuthResult>;
   changePassword: (current: string, next: string) => Promise<AuthResult>;
   setManagerShift: (date: string, type: ManagerShiftType | null) => void;
+  /** Импорт графика из Excel: заменяет смены на затронутых датах. Возвращает число записанных смен. */
+  importManagerSchedule: (shifts: ImportedShift[]) => Promise<number>;
+  /** Импорт ростера из Excel: добавляет новых сотрудников (по имени). Возвращает число добавленных. */
+  importTeam: (team: ImportedEmployee[]) => Promise<number>;
+  /** Импорт смен всех сотрудников из Excel: заменяет смены на затронутых датах. Возвращает число смен. */
+  importShifts: (rows: ImportedEmployeeShift[]) => Promise<number>;
   addEmployee: (e: Omit<Employee, 'id' | 'color'>) => void;
   updateEmployee: (id: string, patch: Partial<Employee>) => void;
   removeEmployee: (id: string) => void;
@@ -179,7 +201,7 @@ function Inner({ children }: { children: React.ReactNode }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, name, position, created_at, restaurant_id, restaurants(name)')
+        .select('id, name, position, avatar_url, created_at, restaurant_id, restaurants(name)')
         .eq('id', uid!)
         .maybeSingle();
       if (error) throw error;
@@ -190,6 +212,7 @@ function Inner({ children }: { children: React.ReactNode }) {
         email: session?.user?.email ?? '',
         passHash: '',
         position: data.position ?? undefined,
+        avatarUrl: data.avatar_url ?? undefined,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         restaurantName: (data.restaurants as any)?.name ?? undefined,
         createdAt: data.created_at,
@@ -219,7 +242,11 @@ function Inner({ children }: { children: React.ReactNode }) {
     queryKey: ['shifts', restaurantId],
     enabled: hasRest,
     queryFn: async () => {
-      const { data, error } = await supabase.from('shifts').select('*');
+      // только текущая неделя и дальше — иначе упираемся в лимит строк Supabase
+      const { data, error } = await supabase
+        .from('shifts')
+        .select('*')
+        .gte('work_date', weekFloorISO());
       if (error) throw error;
       return data.map(mapShift);
     },
@@ -244,11 +271,18 @@ function Inner({ children }: { children: React.ReactNode }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('manager_schedule')
-        .select('work_date, shift_type')
+        .select('work_date, shift_type, start_time, end_time')
         .eq('profile_id', uid!);
       if (error) throw error;
       const m: ManagerSchedule = {};
-      for (const r of data) m[r.work_date] = r.shift_type;
+      for (const r of data) {
+        const def = entryForType(r.shift_type);
+        m[r.work_date] = {
+          type: r.shift_type,
+          start: r.start_time ? String(r.start_time).slice(0, 5) : def.start,
+          end: r.end_time ? String(r.end_time).slice(0, 5) : def.end,
+        };
+      }
       return m;
     },
   });
@@ -274,6 +308,13 @@ function Inner({ children }: { children: React.ReactNode }) {
   const dailyLog = checksQ.data ?? EMPTY_LOG;
 
   const ready = authReady && (!uid || profileQ.isFetched);
+
+  // напоминания о смене и заказах поставщикам — переплан. при каждом
+  // изменении личного графика (импорт, ручная правка)
+  useEffect(() => {
+    if (!enabled || !scheduleQ.isFetched) return;
+    scheduleReminders(managerSchedule).catch((e) => console.warn(e));
+  }, [enabled, scheduleQ.isFetched, managerSchedule]);
 
   const value = useMemo<StoreValue>(() => {
     const invalidate = (key: string) =>
@@ -372,25 +413,67 @@ function Inner({ children }: { children: React.ReactNode }) {
         invalidate('profile');
       },
 
+      uploadAvatar: async (uri, mimeType) => {
+        if (!uid) return { ok: false, error: 'Нет активной сессии' };
+        try {
+          // на нативе fetch(uri) для file:// иногда возвращает пустое/чужое
+          // тело (не читает локальный файл) — base64 через FileSystem надёжен
+          let arrayBuffer: ArrayBuffer;
+          if (Platform.OS === 'web') {
+            const res = await fetch(uri);
+            arrayBuffer = await res.arrayBuffer();
+          } else {
+            const base64 = await FileSystem.readAsStringAsync(uri, {
+              encoding: 'base64',
+            });
+            arrayBuffer = decodeBase64(base64);
+          }
+          if (arrayBuffer.byteLength < 1000) {
+            return { ok: false, error: 'Не удалось прочитать файл фото' };
+          }
+          const ext = mimeType.split('/')[1] || 'jpg';
+          const path = `${uid}/avatar.${ext}`;
+          const up = await supabase.storage
+            .from('avatars')
+            .upload(path, arrayBuffer, { contentType: mimeType, upsert: true });
+          if (up.error) return { ok: false, error: up.error.message };
+          const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+          // без cache-bust телефон/CDN покажет старую картинку после смены фото
+          const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
+          const { error } = await supabase
+            .from('profiles')
+            .update({ avatar_url: publicUrl })
+            .eq('id', uid);
+          if (error) return { ok: false, error: error.message };
+          invalidate('profile');
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+
       // ─── личный график менеджера
       setManagerShift: async (date, type) => {
         if (!uid || !restaurantId) return;
         const key = ['schedule', uid];
         const prev = qc.getQueryData<ManagerSchedule>(key);
+        const entry = type ? entryForType(type) : null;
         qc.setQueryData<ManagerSchedule>(key, (old) => {
           const m = { ...(old ?? {}) };
-          if (type) m[date] = type;
+          if (entry) m[date] = entry;
           else delete m[date];
           return m;
         });
         try {
-          if (type) {
+          if (entry) {
             const { error } = await supabase.from('manager_schedule').upsert(
               {
                 profile_id: uid,
                 restaurant_id: restaurantId,
                 work_date: date,
-                shift_type: type,
+                shift_type: entry.type,
+                start_time: entry.start,
+                end_time: entry.end,
               },
               { onConflict: 'profile_id,work_date' }
             );
@@ -408,6 +491,135 @@ function Inner({ children }: { children: React.ReactNode }) {
           console.warn(e);
         }
         invalidate('schedule');
+      },
+
+      importManagerSchedule: async (shifts) => {
+        if (!uid || !restaurantId || !shifts.length) return 0;
+        const key = ['schedule', uid];
+        const prev = qc.getQueryData<ManagerSchedule>(key);
+        qc.setQueryData<ManagerSchedule>(key, () => {
+          const m: ManagerSchedule = {};
+          for (const s of shifts)
+            m[s.date] = { type: s.type, start: s.start, end: s.end };
+          return m;
+        });
+        try {
+          // импорт полностью пересобирает личный график — чистим свои строки
+          const del = await supabase
+            .from('manager_schedule')
+            .delete()
+            .eq('profile_id', uid);
+          if (del.error) throw del.error;
+          const { error } = await supabase.from('manager_schedule').insert(
+            shifts.map((s) => ({
+              profile_id: uid,
+              restaurant_id: restaurantId,
+              work_date: s.date,
+              shift_type: s.type,
+              start_time: s.start,
+              end_time: s.end,
+            }))
+          );
+          if (error) throw error;
+        } catch (e) {
+          qc.setQueryData(key, prev);
+          console.warn(e);
+          throw e;
+        }
+        invalidate('schedule');
+        return shifts.length;
+      },
+
+      importTeam: async (team) => {
+        if (!restaurantId || !team.length) return 0;
+        const key = (n: string) => n.trim().toLowerCase();
+        const incoming = new Set(team.map((e) => key(e.name)));
+
+        // сотрудники не из этой недели удаляются (их смены уйдут каскадом)
+        const stale = employees.filter((e) => !incoming.has(key(e.name)));
+        if (stale.length) {
+          const { error } = await supabase
+            .from('employees')
+            .delete()
+            .in(
+              'id',
+              stale.map((e) => e.id)
+            );
+          if (error) console.warn(error.message);
+        }
+
+        const existing = new Set(
+          employees
+            .filter((e) => incoming.has(key(e.name)))
+            .map((e) => key(e.name))
+        );
+        const fresh = team.filter((e) => !existing.has(key(e.name)));
+        if (fresh.length) {
+          const kept = employees.length - stale.length;
+          const rows = fresh.map((e, i) => ({
+            restaurant_id: restaurantId,
+            name: e.name,
+            role: e.role,
+            color: EMPLOYEE_COLORS[(kept + i) % EMPLOYEE_COLORS.length],
+          }));
+          const { error } = await supabase.from('employees').insert(rows);
+          if (error) {
+            console.warn(error.message);
+            throw error;
+          }
+        }
+        invalidate('employees');
+        invalidate('shifts');
+        return fresh.length;
+      },
+
+      importShifts: async (rows) => {
+        if (!restaurantId || !rows.length) return 0;
+        // свежий список сотрудников — importTeam мог вставить их только что,
+        // а кэш store в этом тике ещё старый
+        const { data: emps, error: e1 } = await supabase
+          .from('employees')
+          .select('id, name');
+        if (e1) {
+          console.warn(e1.message);
+          throw e1;
+        }
+        const idByName = new Map<string, string>();
+        for (const e of emps ?? [])
+          idByName.set(String(e.name).trim().toLowerCase(), e.id);
+
+        const matched = rows
+          .map((r) => ({
+            employee_id: idByName.get(r.name.trim().toLowerCase()),
+            work_date: r.date,
+            start_time: r.start,
+            end_time: r.end,
+            position: r.position ?? null,
+          }))
+          .filter((r): r is typeof r & { employee_id: string } => !!r.employee_id);
+        if (!matched.length) return 0;
+
+        // заменяем все смены во всём диапазоне импортируемых недель
+        const dates = matched.map((r) => r.work_date).sort();
+        const del = await supabase
+          .from('shifts')
+          .delete()
+          .eq('restaurant_id', restaurantId)
+          .gte('work_date', dates[0])
+          .lte('work_date', dates[dates.length - 1]);
+        if (del.error) {
+          console.warn(del.error.message);
+          throw del.error;
+        }
+        const ins = await supabase
+          .from('shifts')
+          .insert(matched.map((r) => ({ restaurant_id: restaurantId, ...r })));
+        if (ins.error) {
+          console.warn(ins.error.message);
+          throw ins.error;
+        }
+        invalidate('shifts');
+        return matched.length;
       },
 
       // ─── сотрудники

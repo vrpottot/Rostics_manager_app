@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
   DarkTheme,
@@ -179,10 +179,71 @@ function Loading({ colors }: { colors: Colors }) {
 }
 
 function Root() {
-  const { ready, isAuthed } = useStore();
+  const { ready, isAuthed, account, logout } = useStore();
   const { colors } = useTheme();
   if (!ready) return <Loading colors={colors} />;
-  return isAuthed ? <Tabs /> : <AuthStack />;
+  if (!isAuthed) return <AuthStack />;
+  if (!account) return <NoProfile colors={colors} onLogout={logout} />;
+  return <Tabs />;
+}
+
+function NoProfile({
+  colors,
+  onLogout,
+}: {
+  colors: Colors;
+  onLogout: () => void;
+}) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.bg,
+        padding: 32,
+        gap: 16,
+      }}
+    >
+      <Ionicons name="person-remove-outline" size={48} color={colors.textFaint} />
+      <Text
+        style={{
+          fontFamily: font.semibold,
+          fontSize: 16,
+          color: colors.text,
+          textAlign: 'center',
+        }}
+      >
+        Профиль не найден
+      </Text>
+      <Text
+        style={{
+          fontFamily: font.medium,
+          fontSize: 13,
+          color: colors.textMuted,
+          textAlign: 'center',
+          lineHeight: 19,
+        }}
+      >
+        Аккаунт есть, но данные ресторана удалены. Зарегистрируйтесь заново или
+        войдите под другим аккаунтом.
+      </Text>
+      <Pressable
+        onPress={onLogout}
+        style={{
+          marginTop: 8,
+          backgroundColor: colors.brand,
+          borderRadius: 14,
+          paddingVertical: 13,
+          paddingHorizontal: 28,
+        }}
+      >
+        <Text style={{ color: '#fff', fontFamily: font.display, fontSize: 15 }}>
+          Выйти
+        </Text>
+      </Pressable>
+    </View>
+  );
 }
 
 function Shell() {

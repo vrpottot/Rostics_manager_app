@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,6 +10,8 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import * as Notifications from 'expo-notifications';
 import { ProfileStackParams } from '../navigation';
 import { useStore } from '../store';
 import {
@@ -17,15 +20,21 @@ import {
   useTheme,
 } from '../ThemeContext';
 import { Colors, font } from '../theme';
-import { Card, Field, PrimaryButton } from '../components';
+import { Avatar, Card, Field, PrimaryButton } from '../components';
+import { confirmAsync } from '../utils';
+import {
+  requestNotificationPermissions,
+  scheduleReminders,
+} from '../lib/notifications';
 
 type Props = NativeStackScreenProps<ProfileStackParams, 'ProfileSettings'>;
 
-type Tab = 'info' | 'security' | 'appearance';
+type Tab = 'info' | 'security' | 'notifications' | 'appearance';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'info', label: 'Профиль' },
   { key: 'security', label: 'Email и пароль' },
+  { key: 'notifications', label: 'Уведомления' },
   { key: 'appearance', label: 'Оформление' },
 ];
 
@@ -40,11 +49,40 @@ const THEME_OPTIONS: {
 ];
 
 export default function ProfileSettingsScreen(_: Props) {
-  const { account, updateAccount, changePassword, logout } = useStore();
+  const {
+    account,
+    managerSchedule,
+    updateAccount,
+    uploadAvatar,
+    changePassword,
+    logout,
+  } = useStore();
   const { colors, mode, setMode } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [tab, setTab] = useState<Tab>('info');
+  const [notifStatus, setNotifStatus] = useState<
+    'unknown' | 'granted' | 'denied' | 'web'
+  >('unknown');
+  const [notifBusy, setNotifBusy] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      setNotifStatus('web');
+      return;
+    }
+    Notifications.getPermissionsAsync().then((p) =>
+      setNotifStatus(p.granted ? 'granted' : 'denied')
+    );
+  }, []);
+
+  const enableNotifications = async () => {
+    setNotifBusy(true);
+    const granted = await requestNotificationPermissions();
+    setNotifStatus(granted ? 'granted' : 'denied');
+    if (granted) await scheduleReminders(managerSchedule);
+    setNotifBusy(false);
+  };
 
   const [name, setName] = useState(account?.name ?? '');
   const [restaurant, setRestaurant] = useState(account?.restaurantName ?? '');
@@ -52,8 +90,33 @@ export default function ProfileSettingsScreen(_: Props) {
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
 
   if (!account) return null;
+
+  const pickAvatar = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setMsg({ text: 'Нет доступа к фото на устройстве', ok: false });
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+    });
+    if (res.canceled || !res.assets?.[0]) return;
+    const asset = res.assets[0];
+    setAvatarUploading(true);
+    setMsg(null);
+    const result = await uploadAvatar(asset.uri, asset.mimeType ?? 'image/jpeg');
+    setAvatarUploading(false);
+    setMsg({
+      text: result.ok ? 'Фото профиля обновлено' : result.error,
+      ok: result.ok,
+    });
+  };
 
   const infoDirty =
     name.trim() !== account.name ||
@@ -78,11 +141,15 @@ export default function ProfileSettingsScreen(_: Props) {
     }
   };
 
-  const confirmLogout = () =>
-    Alert.alert('Выйти из аккаунта?', 'Данные ресторана останутся на устройстве', [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Выйти', style: 'destructive', onPress: logout },
-    ]);
+  const confirmLogout = async () => {
+    const ok = await confirmAsync(
+      'Выйти из аккаунта?',
+      'Данные ресторана останутся на сервере',
+      'Выйти',
+      true
+    );
+    if (ok) logout();
+  };
 
   const switchTab = (t: Tab) => {
     setTab(t);
@@ -122,6 +189,29 @@ export default function ProfileSettingsScreen(_: Props) {
 
         {tab === 'info' && (
           <Card>
+            <Pressable
+              style={styles.avatarPick}
+              onPress={pickAvatar}
+              disabled={avatarUploading}
+            >
+              <View style={styles.avatarWrap}>
+                <Avatar
+                  name={account.name}
+                  color={colors.brand}
+                  size={72}
+                  uri={account.avatarUrl}
+                />
+                <View style={styles.avatarBadge}>
+                  {avatarUploading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="camera" size={14} color="#fff" />
+                  )}
+                </View>
+              </View>
+              <Text style={styles.avatarPickText}>Сменить фото</Text>
+            </Pressable>
+
             <Field label="Имя и фамилия" value={name} onChangeText={setName} />
             <Field
               label="Должность"
@@ -170,6 +260,35 @@ export default function ProfileSettingsScreen(_: Props) {
                 onPress={savePassword}
                 disabled={!cur || !next}
               />
+            </Card>
+          </>
+        )}
+
+        {tab === 'notifications' && (
+          <>
+            <Text style={styles.section}>Напоминания</Text>
+            <Card>
+              <Text style={styles.rowTitle}>
+                {notifStatus === 'granted'
+                  ? 'Уведомления включены'
+                  : notifStatus === 'web'
+                  ? 'Недоступно в веб-версии'
+                  : 'Уведомления выключены'}
+              </Text>
+              <Text style={styles.hint}>
+                Напомним за час до начала смены и утром в день, когда нужно
+                заказать поставщику (Ресурс, Пепси, ИВЛ, Прованс) — с учётом
+                вашего личного графика.
+              </Text>
+              {notifStatus !== 'granted' && notifStatus !== 'web' ? (
+                <View style={{ marginTop: 12 }}>
+                  <PrimaryButton
+                    title={notifBusy ? 'Включаем…' : 'Включить уведомления'}
+                    onPress={enableNotifications}
+                    disabled={notifBusy}
+                  />
+                </View>
+              ) : null}
             </Card>
           </>
         )}
@@ -237,6 +356,27 @@ const makeStyles = (colors: Colors) =>
     tabText: { fontFamily: font.semibold, fontSize: 14, color: colors.textMuted },
     tabTextOn: { color: colors.brand, fontFamily: font.bold },
     content: { padding: 18, paddingBottom: 40 },
+    avatarPick: { alignItems: 'center', marginBottom: 18 },
+    avatarWrap: { width: 72, height: 72 },
+    avatarBadge: {
+      position: 'absolute',
+      right: -2,
+      bottom: -2,
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: colors.brand,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: colors.card,
+    },
+    avatarPickText: {
+      fontFamily: font.semibold,
+      fontSize: 13,
+      color: colors.brand,
+      marginTop: 8,
+    },
     msg: {
       borderRadius: 10,
       padding: 11,

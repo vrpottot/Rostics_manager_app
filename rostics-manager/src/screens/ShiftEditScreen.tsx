@@ -17,6 +17,7 @@ import { Colors, font } from '../theme';
 import { Avatar } from '../components';
 import {
   addDays,
+  confirmAsync,
   fromISODate,
   humanDate,
   isValidTime,
@@ -76,18 +77,11 @@ export default function ShiftEditScreen({ navigation, route }: Props) {
     navigation.goBack();
   };
 
-  const confirmDelete = () =>
-    Alert.alert('Удалить смену?', undefined, [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: () => {
-          if (editing) removeShift(editing.id);
-          navigation.goBack();
-        },
-      },
-    ]);
+  const confirmDelete = async () => {
+    if (!(await confirmAsync('Удалить смену?', undefined, 'Удалить', true))) return;
+    if (editing) removeShift(editing.id);
+    navigation.goBack();
+  };
 
   const shiftDate = (delta: number) =>
     setDate((d) => toISODate(addDays(fromISODate(d), delta)));

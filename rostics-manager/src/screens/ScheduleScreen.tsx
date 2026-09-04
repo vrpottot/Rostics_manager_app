@@ -24,11 +24,19 @@ export default function ScheduleScreen({ navigation }: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  // свёрнутые дни — по умолчанию раскрыт только сегодня
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const toggleDay = (d: string) =>
+    setCollapsed((c) => ({ ...c, [d]: !(c[d] ?? d !== todayISO()) }));
+  const isOpen = (d: string) => !(collapsed[d] ?? d !== todayISO());
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => toISODate(addDays(weekStart, i))),
     [weekStart]
   );
+
+  // раньше текущей недели листать нельзя — график начинается с неё
+  const minWeek = useMemo(() => toISODate(startOfWeek(new Date())), []);
 
   const byDay = useMemo(() => {
     const map: Record<string, typeof shifts> = {};
@@ -51,9 +59,16 @@ export default function ScheduleScreen({ navigation }: Props) {
 
       <View style={styles.weekBar}>
         <View style={styles.weekNav}>
-          <Pressable hitSlop={10} onPress={() => setWeekStart((w) => addDays(w, -7))}>
-            <Ionicons name="chevron-back" size={24} color={colors.text} />
-          </Pressable>
+          {days[0] > minWeek ? (
+            <Pressable
+              hitSlop={10}
+              onPress={() => setWeekStart((w) => addDays(w, -7))}
+            >
+              <Ionicons name="chevron-back" size={24} color={colors.text} />
+            </Pressable>
+          ) : (
+            <View style={styles.navSpacer} />
+          )}
           <Pressable onPress={() => setWeekStart(startOfWeek(new Date()))}>
             <Text style={styles.range}>{rangeLabel}</Text>
           </Pressable>
@@ -74,22 +89,33 @@ export default function ScheduleScreen({ navigation }: Props) {
             0
           );
           const isToday = d === todayISO();
+          const open = isOpen(d);
           return (
             <View key={d} style={styles.day}>
-              <View style={styles.dayHead}>
+              <Pressable style={styles.dayHead} onPress={() => toggleDay(d)}>
+                <Ionicons
+                  name={open ? 'chevron-down' : 'chevron-forward'}
+                  size={18}
+                  color={colors.textMuted}
+                />
                 <Text style={[styles.dayName, isToday && styles.today]}>
                   {weekdayShort(d)}, {humanDate(d)}
-                  {dayHours > 0 ? `  ·  ${Math.round(dayHours * 10) / 10} ч` : ''}
+                  {byDay[d].length > 0
+                    ? `  ·  ${byDay[d].length} смен · ${
+                        Math.round(dayHours * 10) / 10
+                      } ч`
+                    : ''}
                 </Text>
+                <View style={styles.flex} />
                 <Pressable
                   hitSlop={10}
                   onPress={() => navigation.navigate('ShiftEdit', { date: d })}
                 >
                   <Ionicons name="add-circle" size={28} color={colors.brand} />
                 </Pressable>
-              </View>
+              </Pressable>
 
-              {byDay[d].length === 0 ? (
+              {!open ? null : byDay[d].length === 0 ? (
                 <Text style={styles.free}>Смен нет</Text>
               ) : (
                 byDay[d].map((s) => {
@@ -142,6 +168,7 @@ const makeStyles = (colors: Colors) =>
     justifyContent: 'space-between',
   },
   range: { fontFamily: font.display, fontSize: 16, color: colors.text },
+  navSpacer: { width: 24, height: 24 },
   sub: {
     fontFamily: font.semibold,
     color: colors.textMuted,
@@ -154,8 +181,14 @@ const makeStyles = (colors: Colors) =>
   dayHead: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 8,
     marginBottom: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   dayName: { fontFamily: font.display, fontSize: 13, color: colors.text },
   today: { color: colors.brand },

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -136,10 +137,12 @@ export function Avatar({
   name,
   color,
   size = 36,
+  uri,
 }: {
   name: string;
   color: string;
   size?: number;
+  uri?: string | null;
 }) {
   const initials = name
     .split(' ')
@@ -147,6 +150,14 @@ export function Avatar({
     .map((p) => p[0] ?? '')
     .join('')
     .toUpperCase();
+  if (uri) {
+    return (
+      <Image
+        source={{ uri }}
+        style={{ width: size, height: size, borderRadius: size / 2 }}
+      />
+    );
+  }
   return (
     <View
       style={{
